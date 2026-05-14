@@ -44,24 +44,52 @@ class Game {
 
     // ---------- Scene ----------
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0xa6dde0);
-    this.scene.fog = new THREE.Fog(0xa6dde0, 40, 100);
+    // Sky gradient via a large inverted hemisphere with vertex colors
+    const skyGeom = new THREE.SphereGeometry(180, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+    const skyColors = [];
+    const zenith = new THREE.Color(0x6fb6e8); // deep blue at top
+    const horizon = new THREE.Color(0xe8d4a8); // warm cream at horizon (sun light bleed)
+    const skyPos = skyGeom.attributes.position;
+    for (let i = 0; i < skyPos.count; i++) {
+      const y = skyPos.getY(i);
+      const t = Math.max(0, Math.min(1, y / 180));
+      const c = horizon.clone().lerp(zenith, t);
+      skyColors.push(c.r, c.g, c.b);
+    }
+    skyGeom.setAttribute("color", new THREE.Float32BufferAttribute(skyColors, 3));
+    const skyMat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      side: THREE.BackSide,
+      fog: false,
+      depthWrite: false,
+    });
+    this.skyDome = new THREE.Mesh(skyGeom, skyMat);
+    this.scene.add(this.skyDome);
 
-    // Sun
-    this.sun = new THREE.DirectionalLight(0xffffff, 1.05);
+    this.scene.fog = new THREE.Fog(0xc8d8d4, 50, 130);
+
+    // Sun — warmer color for golden-hour feel
+    this.sun = new THREE.DirectionalLight(0xfff2d6, 1.4);
     this.sun.position.set(8, 14, 6);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(1024, 1024);
-    this.sun.shadow.camera.left = -10;
-    this.sun.shadow.camera.right = 10;
-    this.sun.shadow.camera.top = 10;
-    this.sun.shadow.camera.bottom = -10;
+    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.camera.left = -12;
+    this.sun.shadow.camera.right = 12;
+    this.sun.shadow.camera.top = 12;
+    this.sun.shadow.camera.bottom = -12;
     this.sun.shadow.camera.near = 0.5;
     this.sun.shadow.camera.far = 60;
+    this.sun.shadow.bias = -0.0005;
     this.scene.add(this.sun, this.sun.target);
 
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-    this.scene.add(new THREE.HemisphereLight(0xb6e3df, 0x6a8a78, 0.6));
+    // Cooler, lower-intensity ambient + sky/ground hemisphere for depth
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+    this.scene.add(new THREE.HemisphereLight(0x9ec8e8, 0x6a8a78, 0.65));
+
+    // A faint warm rim light from behind to separate Hanna from the background
+    const rim = new THREE.DirectionalLight(0xffd9a8, 0.3);
+    rim.position.set(-6, 8, -8);
+    this.scene.add(rim);
 
     // Camera — 3rd-person follow behind Hanna
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 200);
@@ -82,17 +110,25 @@ class Game {
     // Async-load the FBX. If it works, swap her in.
     loadHannaFBX("models/hanna/hanna.fbx")
       .then((fbxHanna) => {
-        // Preserve current pos/state
         const pos = this.hanna.group.position.clone();
         this.scene.remove(this.hanna.group);
         this.hanna = fbxHanna;
         this.hanna.setPosition(pos.x, pos.y, pos.z);
         this.hanna.setState(this.over ? "hit" : this.running ? "run" : "idle");
         this.scene.add(this.hanna.group);
-        console.info("Loaded FBX Hanna.");
+        console.info("[Hanna] FBX model loaded.");
+        this._toast?.("3D Hanna loaded");
       })
       .catch((err) => {
-        console.warn("FBX load failed, using procedural Hanna:", err);
+        console.error("[Hanna] FBX load failed:", err);
+        // Show on-screen so the user knows
+        const msg = err?.message || String(err) || "unknown";
+        const t = document.getElementById("toast");
+        if (t) {
+          t.textContent = "Using stylized Hanna (FBX failed: " + msg.slice(0, 60) + ")";
+          t.classList.add("show");
+          setTimeout(() => t.classList.remove("show"), 4000);
+        }
       });
 
     // FX
@@ -575,8 +611,8 @@ class Game {
         s.collected = true;
         this.scene.remove(s.mesh);
         this.run.coins += 1;
-        // Combo bumps every coin
-        this.run.combo = Math.min(8, this.run.combo + 1);
+        // Combo bumps every coin (no hard cap — let it climb)
+        this.run.combo = this.run.combo + 1;
         this.run.lastCoinAt = this.run.time;
         const mult = this.run.combo * (this.run.time < this.player.doubleUntil ? 2 : 1);
         this.run.score += COIN_SCORE * mult;
@@ -676,6 +712,12 @@ class Game {
     this.sun.position.set(tx + 8, 14, tz + 6);
     this.sun.target.position.set(tx, 0, tz);
     this.sun.target.updateMatrixWorld();
+
+    // Sky dome moves with the camera so the horizon stays infinite
+    if (this.skyDome) {
+      this.skyDome.position.x = this.camera.position.x;
+      this.skyDome.position.z = this.camera.position.z;
+    }
   }
 }
 

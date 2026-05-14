@@ -35,26 +35,51 @@ export class HannaFBX {
     // Many FBX models face -Z by default; our world has Hanna run toward +Z.
     fbxRoot.rotation.y = Math.PI;
 
-    // Enable shadows on every mesh
+    // Manually attach our textures by mesh name (FBX path references rarely
+    // resolve in the browser). Mesh names from the file inspection are
+    // "Hair001.baked.005" and "pERSONAJE.002". We replace each material with
+    // MeshStandardMaterial using the corresponding texture from
+    // models/hanna/textures/.
+    const loader = new THREE.TextureLoader();
+    const tex = (file) => {
+      const t = loader.load(`models/hanna/textures/${file}`);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = 8;
+      return t;
+    };
+    const skinTex = tex("BOdy Skin Base Color.png");
+    const faceTex = tex("FACE Base Color apha.png");
+    const topTex = tex("top color.png");
+    const botTex = tex("bot color.jpg");
+    const colorsTex = tex("COLORS.jpg");
+
+    let meshCount = 0;
     fbxRoot.traverse((c) => {
       if (c.isMesh) {
+        meshCount++;
         c.castShadow = true;
         c.receiveShadow = true;
-        // The model may use MeshPhong; convert to a toon-like look so it
-        // matches our stylized world. Comment this out if you want the model's
-        // original shading.
-        if (c.material) {
-          // Some FBX exports give arrays of materials per submesh
-          const mats = Array.isArray(c.material) ? c.material : [c.material];
-          for (const m of mats) {
-            if (m.map) {
-              m.map.anisotropy = 4;
-              m.map.colorSpace = THREE.SRGBColorSpace;
-            }
-          }
-        }
+        const name = (c.name || "").toLowerCase();
+        // Heuristic mapping by mesh name — works because the artist named the
+        // submeshes by body part. Fall back to a neutral skin tone.
+        let map = colorsTex;
+        if (name.includes("hair")) map = colorsTex; // hair likely lives in COLORS.jpg
+        else if (name.includes("face")) map = faceTex;
+        else if (name.includes("top") || name.includes("shirt")) map = topTex;
+        else if (name.includes("bot") || name.includes("pant") || name.includes("leg")) map = botTex;
+        else if (name.includes("body") || name.includes("skin") || name.includes("personaje")) map = skinTex;
+
+        c.material = new THREE.MeshStandardMaterial({
+          map,
+          roughness: 0.7,
+          metalness: 0.05,
+          transparent: false,
+        });
       }
     });
+    if (meshCount === 0) {
+      throw new Error("FBX contained no meshes");
+    }
 
     // Body root for procedural transforms
     this.body = new THREE.Group();

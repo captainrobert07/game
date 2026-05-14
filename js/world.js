@@ -31,7 +31,14 @@ const PALETTE = {
 };
 
 function toon(color) {
-  return new THREE.MeshToonMaterial({ color });
+  // Switched from toon to standard for richer realism while keeping the
+  // stylized palette — standard material responds to lighting properly.
+  return new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.85,
+    metalness: 0.02,
+    flatShading: true,
+  });
 }
 
 function box(w, h, d, color) {
@@ -61,11 +68,49 @@ class Chunk {
   constructor() {
     this.group = new THREE.Group();
 
-    // Path (the brown strip Hanna runs on)
-    const path = box(PATH_WIDTH, 0.1, CHUNK, PALETTE.pathLight);
-    path.position.y = 0.05;
+    // Path — high-density plane with vertex-colored dirt variation. Reads as
+    // a worn footpath with light and dark patches instead of a flat brown box.
+    const pathGeom = new THREE.PlaneGeometry(PATH_WIDTH, CHUNK, 8, Math.floor(CHUNK));
+    const pathColors = [];
+    const dirtA = new THREE.Color(0xc9a978);
+    const dirtB = new THREE.Color(0xa67d4a);
+    const dirtC = new THREE.Color(0xddc499);
+    const pPos = pathGeom.attributes.position;
+    for (let i = 0; i < pPos.count; i++) {
+      const r = Math.random();
+      const c = r < 0.4 ? dirtA : r < 0.75 ? dirtB : dirtC;
+      pathColors.push(c.r, c.g, c.b);
+    }
+    pathGeom.setAttribute("color", new THREE.Float32BufferAttribute(pathColors, 3));
+    const pathMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.95,
+      metalness: 0,
+    });
+    const path = new THREE.Mesh(pathGeom, pathMat);
+    path.rotation.x = -Math.PI / 2;
+    path.position.y = 0.06;
     path.receiveShadow = true;
     this.group.add(path);
+
+    // Tiny pebbles scattered on the path for texture
+    for (let i = 0; i < 8; i++) {
+      const r = 0.04 + Math.random() * 0.06;
+      const pebble = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(r, 0),
+        new THREE.MeshStandardMaterial({
+          color: 0x7a6a55,
+          roughness: 0.9,
+        })
+      );
+      pebble.position.set(
+        (Math.random() - 0.5) * (PATH_WIDTH - 0.4),
+        0.07,
+        (Math.random() - 0.5) * (CHUNK - 0.5)
+      );
+      pebble.castShadow = true;
+      this.group.add(pebble);
+    }
 
     // Lane stripes (subtle dirt color variation)
     for (const x of [-LANE, LANE]) {
@@ -82,11 +127,35 @@ class Chunk {
       this.group.add(stripe);
     }
 
-    // Grass on either side
+    // Grass on either side — vertex-colored for natural variation
     const sideW = 30;
+    const grassA = new THREE.Color(0x82c267);
+    const grassB = new THREE.Color(0x6fa84d);
+    const grassC = new THREE.Color(0x9bcc6e);
+    const grassD = new THREE.Color(0x4f8a3d);
     for (const sign of [-1, 1]) {
-      const grass = box(sideW, 0.08, CHUNK, sign === -1 ? PALETTE.grassLight : PALETTE.grassDark);
-      grass.position.set(sign * (PATH_WIDTH / 2 + sideW / 2), 0.04, 0);
+      const g = new THREE.PlaneGeometry(sideW, CHUNK, 8, Math.floor(CHUNK));
+      const cols = [];
+      const gp = g.attributes.position;
+      for (let i = 0; i < gp.count; i++) {
+        // Slight noise — pick from 4 grass tones
+        const r = Math.random();
+        let c;
+        if (r < 0.3) c = grassA;
+        else if (r < 0.6) c = grassB;
+        else if (r < 0.85) c = grassC;
+        else c = grassD;
+        cols.push(c.r, c.g, c.b);
+      }
+      g.setAttribute("color", new THREE.Float32BufferAttribute(cols, 3));
+      const mat = new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 0.95,
+        metalness: 0,
+      });
+      const grass = new THREE.Mesh(g, mat);
+      grass.rotation.x = -Math.PI / 2;
+      grass.position.set(sign * (PATH_WIDTH / 2 + sideW / 2), 0.05, 0);
       grass.receiveShadow = true;
       this.group.add(grass);
     }
