@@ -1,313 +1,581 @@
 import * as THREE from "three";
 
+/**
+ * Hanna — procedural 3D character matching the teal-haired reference avatar.
+ * Stylized chunky proportions, expressive face, supports run/jump/slide/hit
+ * animations for the endless runner.
+ */
+
 const PALETTE = {
-  skin: 0xf5cfa0,
+  skin: 0xf2c8a0,
   skinShade: 0xd9a87a,
-  hair: 0xc97a2b,
-  hairShade: 0x8a4a14,
-  dress: 0xff7eb6,
-  dressShade: 0xcc4d8a,
-  apron: 0xfff3d6,
-  belt: 0x6b3e20,
-  boots: 0x4a2a16,
-  ribbon: 0xffe066,
-  eyes: 0x1c1c1c,
-  cheek: 0xff8a8a,
+  freckle: 0xb8794a,
+  hair: 0x2bbfb3, // teal
+  hairShade: 0x1a8a82,
+  hairHighlight: 0x4fd9cd,
+  brow: 0x1a8a82,
+  iris: 0x2bbfb3,
+  sclera: 0xffffff,
+  pupil: 0x081818,
+  lashes: 0x141414,
+  lipUpper: 0xc97a82,
+  lipLower: 0xe89aa0,
+  cheek: 0xff9aa6,
+  shirt: 0x8aa898, // sage / dusty green
+  shirtShade: 0x6a8a78,
+  pants: 0x3a4a6a, // dark indigo
+  shoes: 0x2a2a2a,
+  gold: 0xf5c84a,
+  goldDark: 0xb88a1a,
+  choker: 0x141414,
 };
 
-function mat(color) {
-  return new THREE.MeshToonMaterial({ color, gradientMap: null });
+function toon(color) {
+  return new THREE.MeshToonMaterial({ color });
+}
+function basic(color) {
+  return new THREE.MeshBasicMaterial({ color });
 }
 
-function box(w, h, d, color, x = 0, y = 0, z = 0) {
-  const g = new THREE.BoxGeometry(w, h, d);
-  const m = new THREE.Mesh(g, mat(color));
-  m.position.set(x, y, z);
-  m.castShadow = true;
-  m.receiveShadow = true;
-  return m;
-}
-
-function sphere(r, color, x = 0, y = 0, z = 0, segments = 16) {
-  const g = new THREE.SphereGeometry(r, segments, segments);
-  const m = new THREE.Mesh(g, mat(color));
-  m.position.set(x, y, z);
+function box(w, h, d, mat) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.castShadow = true;
   return m;
 }
-
-function cylinder(rTop, rBot, h, color, x = 0, y = 0, z = 0) {
-  const g = new THREE.CylinderGeometry(rTop, rBot, h, 12);
-  const m = new THREE.Mesh(g, mat(color));
-  m.position.set(x, y, z);
+function sphere(r, mat, segs = 16) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(r, segs, segs), mat);
+  m.castShadow = true;
+  return m;
+}
+function cyl(rTop, rBot, h, mat, segs = 12) {
+  const m = new THREE.Mesh(
+    new THREE.CylinderGeometry(rTop, rBot, h, segs),
+    mat
+  );
   m.castShadow = true;
   return m;
 }
 
-/**
- * Procedural Clash-of-Clans-style Hanna.
- * Big head, chunky limbs, vibrant palette. Built from primitives so we ship
- * a recognizable character without external assets.
- */
 export class Hanna {
   constructor() {
     this.group = new THREE.Group();
     this.group.name = "Hanna";
 
-    // Body root for vertical bob — keeps feet planted
+    // Root that we bob — keeps feet planted
     this.body = new THREE.Group();
     this.group.add(this.body);
 
-    // ---------- Legs ----------
+    this._buildLegs();
+    this._buildTorso();
+    this._buildArms();
+    this._buildNeckHead();
+    this._buildHair();
+    this._buildShadow();
+
+    this.t = 0;
+    this.state = "run"; // run | jump | slide | hit | idle
+    this.prevState = "run";
+    this.stateTime = 0;
+    this._shieldActive = false;
+    this._doubleActive = false;
+  }
+
+  // ---------- Build ----------
+  _buildLegs() {
+    const skinMat = toon(PALETTE.skin);
+    const pantsMat = toon(PALETTE.pants);
+    const shoesMat = toon(PALETTE.shoes);
+
     this.legL = new THREE.Group();
     this.legR = new THREE.Group();
-    const legGeom = new THREE.BoxGeometry(0.32, 0.55, 0.32);
-    const legMatBoots = mat(PALETTE.boots);
-    const legMeshL = new THREE.Mesh(legGeom, legMatBoots);
-    legMeshL.position.y = -0.275;
-    legMeshL.castShadow = true;
-    this.legL.add(legMeshL);
-    const legMeshR = new THREE.Mesh(legGeom, legMatBoots);
-    legMeshR.position.y = -0.275;
-    legMeshR.castShadow = true;
-    this.legR.add(legMeshR);
-    this.legL.position.set(-0.22, 0.55, 0);
-    this.legR.position.set(0.22, 0.55, 0);
-    this.body.add(this.legL);
-    this.body.add(this.legR);
 
-    // ---------- Dress (flared) ----------
-    const dressBottom = cylinder(0.55, 0.4, 0.55, PALETTE.dress, 0, 0.85, 0);
-    this.body.add(dressBottom);
+    // Pants leg + foot per side
+    const mkLeg = () => {
+      const g = new THREE.Group();
+      const thigh = box(0.28, 0.55, 0.28, pantsMat);
+      thigh.position.y = -0.25;
+      g.add(thigh);
+      const shin = box(0.24, 0.05, 0.24, skinMat);
+      shin.position.y = -0.55;
+      g.add(shin);
+      const shoe = box(0.3, 0.18, 0.42, shoesMat);
+      shoe.position.set(0, -0.65, 0.06);
+      g.add(shoe);
+      return g;
+    };
 
-    // Apron front
-    const apron = box(0.55, 0.42, 0.05, PALETTE.apron, 0, 0.85, 0.36);
-    this.body.add(apron);
+    this.legL.add(mkLeg());
+    this.legR.add(mkLeg());
+    this.legL.position.set(-0.18, 0.85, 0);
+    this.legR.position.set(0.18, 0.85, 0);
+    this.body.add(this.legL, this.legR);
+  }
 
-    // Belt
-    const belt = cylinder(0.42, 0.42, 0.08, PALETTE.belt, 0, 1.15, 0);
-    this.body.add(belt);
+  _buildTorso() {
+    const shirtMat = toon(PALETTE.shirt);
+    const skinMat = toon(PALETTE.skin);
 
-    // ---------- Torso ----------
-    const torso = box(0.7, 0.5, 0.5, PALETTE.dress, 0, 1.4, 0);
-    this.body.add(torso);
+    // Chunky torso with a rounded neckline
+    this.torso = new THREE.Group();
+    this.body.add(this.torso);
+    this.torso.position.y = 1.3;
 
-    // ---------- Arms ----------
+    const tor = box(0.7, 0.55, 0.45, shirtMat);
+    this.torso.add(tor);
+
+    // Hint of waist taper using a smaller box on top
+    const upper = box(0.6, 0.2, 0.42, shirtMat);
+    upper.position.y = 0.35;
+    this.torso.add(upper);
+
+    // Neckline cut — small skin patch where the shirt opens
+    const neckline = box(0.22, 0.1, 0.05, skinMat);
+    neckline.position.set(0, 0.4, 0.22);
+    this.torso.add(neckline);
+
+    // Choker (thin black ring)
+    const choker = cyl(0.18, 0.18, 0.06, toon(PALETTE.choker), 16);
+    choker.position.y = 0.5;
+    this.torso.add(choker);
+
+    // Gold pendant on a thin chain
+    const chainL = cyl(0.005, 0.005, 0.18, toon(PALETTE.gold), 6);
+    chainL.position.set(-0.05, 0.42, 0.18);
+    chainL.rotation.z = -0.3;
+    this.torso.add(chainL);
+    const chainR = chainL.clone();
+    chainR.position.x = 0.05;
+    chainR.rotation.z = 0.3;
+    this.torso.add(chainR);
+
+    const pendant = sphere(0.05, toon(PALETTE.gold), 12);
+    pendant.scale.set(1, 1.4, 0.8);
+    pendant.position.set(0, 0.32, 0.22);
+    this.torso.add(pendant);
+  }
+
+  _buildArms() {
+    const shirtMat = toon(PALETTE.shirt);
+    const skinMat = toon(PALETTE.skin);
+
     this.armL = new THREE.Group();
     this.armR = new THREE.Group();
-    const armGeom = new THREE.BoxGeometry(0.24, 0.55, 0.24);
-    const armMatSleeve = mat(PALETTE.dress);
-    const armMatHand = mat(PALETTE.skin);
 
-    const sleeveL = new THREE.Mesh(armGeom, armMatSleeve);
-    sleeveL.position.y = -0.2;
-    sleeveL.castShadow = true;
-    this.armL.add(sleeveL);
-    const handL = sphere(0.15, PALETTE.skin, 0, -0.5, 0, 12);
-    this.armL.add(handL);
+    const mkArm = () => {
+      const g = new THREE.Group();
+      // Sleeve (long sleeve, sage)
+      const sleeve = box(0.2, 0.45, 0.2, shirtMat);
+      sleeve.position.y = -0.22;
+      g.add(sleeve);
+      // Forearm (skin showing past the sleeve)
+      const forearm = cyl(0.08, 0.085, 0.25, skinMat, 10);
+      forearm.position.y = -0.55;
+      g.add(forearm);
+      // Hand
+      const hand = sphere(0.11, skinMat, 12);
+      hand.position.y = -0.7;
+      hand.scale.set(1, 1.1, 0.9);
+      g.add(hand);
+      return g;
+    };
 
-    const sleeveR = new THREE.Mesh(armGeom, armMatSleeve);
-    sleeveR.position.y = -0.2;
-    sleeveR.castShadow = true;
-    this.armR.add(sleeveR);
-    const handR = sphere(0.15, PALETTE.skin, 0, -0.5, 0, 12);
-    this.armR.add(handR);
-
+    this.armL.add(mkArm());
+    this.armR.add(mkArm());
     this.armL.position.set(-0.45, 1.6, 0);
     this.armR.position.set(0.45, 1.6, 0);
-    this.body.add(this.armL);
-    this.body.add(this.armR);
+    this.body.add(this.armL, this.armR);
+  }
 
-    // ---------- Neck ----------
-    const neck = cylinder(0.14, 0.14, 0.12, PALETTE.skin, 0, 1.72, 0);
+  _buildNeckHead() {
+    const skinMat = toon(PALETTE.skin);
+
+    // Neck
+    const neck = cyl(0.12, 0.12, 0.14, skinMat, 12);
+    neck.position.y = 1.78;
     this.body.add(neck);
 
-    // ---------- Head ----------
+    // Head root
     this.head = new THREE.Group();
-    this.head.position.set(0, 1.95, 0);
+    this.head.position.set(0, 2.05, 0);
     this.body.add(this.head);
 
-    const headBall = sphere(0.42, PALETTE.skin, 0, 0, 0, 24);
-    this.head.add(headBall);
+    // Skull — slightly squished sphere for the rounded stylized look
+    const skull = sphere(0.5, skinMat, 24);
+    skull.scale.set(1.0, 1.05, 0.95);
+    this.head.add(skull);
 
-    // Cheeks
-    this.head.add(sphere(0.06, PALETTE.cheek, -0.28, -0.06, 0.32, 8));
-    this.head.add(sphere(0.06, PALETTE.cheek, 0.28, -0.06, 0.32, 8));
+    // Chin — tiny bevel
+    const chin = sphere(0.18, skinMat, 12);
+    chin.position.set(0, -0.38, 0.12);
+    chin.scale.set(1.2, 0.6, 0.8);
+    this.head.add(chin);
 
-    // Eyes — flat ovals so they read at distance
-    const eyeMat = new THREE.MeshBasicMaterial({ color: PALETTE.eyes });
-    const eyeGeom = new THREE.SphereGeometry(0.06, 12, 12);
-    const eyeL = new THREE.Mesh(eyeGeom, eyeMat);
-    eyeL.scale.set(0.7, 1.2, 0.5);
-    eyeL.position.set(-0.14, 0.04, 0.38);
-    const eyeR = eyeL.clone();
-    eyeR.position.x = 0.14;
-    this.head.add(eyeL);
-    this.head.add(eyeR);
+    this._buildFace();
+    this._buildEars();
+  }
 
-    // Eye highlights
-    const hiMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const hi = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 8), hiMat);
-    hi.position.set(-0.13, 0.07, 0.43);
-    this.head.add(hi);
-    const hi2 = hi.clone();
-    hi2.position.x = 0.15;
-    this.head.add(hi2);
+  _buildFace() {
+    // Eyes — big, bright. White sclera + teal iris + black pupil + highlight + lashes.
+    const eyeGroup = new THREE.Group();
+    this.head.add(eyeGroup);
+    eyeGroup.position.set(0, 0.02, 0.42);
 
-    // Smile — small curved torus segment
-    const smileGeom = new THREE.TorusGeometry(0.08, 0.018, 6, 12, Math.PI);
-    const smile = new THREE.Mesh(smileGeom, eyeMat);
-    smile.rotation.z = Math.PI;
-    smile.position.set(0, -0.12, 0.4);
-    this.head.add(smile);
+    const mkEye = (xSign) => {
+      const g = new THREE.Group();
+      g.position.set(0.16 * xSign, 0, 0);
 
-    // ---------- Hair ----------
-    // Hair cap covering the top/back of the head
-    const hairCap = sphere(0.44, PALETTE.hair, 0, 0.04, -0.02, 24);
-    hairCap.scale.set(1, 0.95, 1);
-    this.head.add(hairCap);
+      // Sclera (white)
+      const sclera = sphere(0.105, basic(PALETTE.sclera), 16);
+      sclera.scale.set(0.9, 1.05, 0.5);
+      g.add(sclera);
 
-    // Bangs front
-    const bangs = box(0.6, 0.18, 0.18, PALETTE.hair, 0, 0.32, 0.3);
-    bangs.rotation.x = -0.2;
-    this.head.add(bangs);
+      // Iris (teal)
+      const iris = sphere(0.075, basic(PALETTE.iris), 14);
+      iris.scale.set(0.9, 1.0, 0.3);
+      iris.position.z = 0.04;
+      g.add(iris);
 
-    // Side locks
-    const sideL = box(0.14, 0.4, 0.18, PALETTE.hair, -0.36, 0.0, 0.1);
-    const sideR = box(0.14, 0.4, 0.18, PALETTE.hair, 0.36, 0.0, 0.1);
-    this.head.add(sideL);
-    this.head.add(sideR);
+      // Pupil
+      const pupil = sphere(0.038, basic(PALETTE.pupil), 12);
+      pupil.scale.set(0.9, 1.0, 0.3);
+      pupil.position.z = 0.06;
+      g.add(pupil);
 
-    // Ponytail (off the back, swings later)
-    this.ponytail = new THREE.Group();
-    this.ponytail.position.set(0, 0.05, -0.42);
-    const tail1 = sphere(0.18, PALETTE.hair, 0, -0.05, -0.04, 12);
-    const tail2 = sphere(0.16, PALETTE.hair, 0, -0.22, -0.1, 12);
-    const tail3 = sphere(0.13, PALETTE.hair, 0, -0.38, -0.16, 12);
-    const tail4 = sphere(0.1, PALETTE.hair, 0, -0.5, -0.22, 12);
-    this.ponytail.add(tail1, tail2, tail3, tail4);
+      // Highlight (top)
+      const hi = sphere(0.022, basic(0xffffff), 8);
+      hi.position.set(-0.025 * xSign, 0.04, 0.075);
+      g.add(hi);
+      const hi2 = sphere(0.012, basic(0xffffff), 8);
+      hi2.position.set(0.03 * xSign, -0.025, 0.075);
+      g.add(hi2);
 
-    // Ribbon at the base of the ponytail
-    const ribbon = box(0.22, 0.08, 0.22, PALETTE.ribbon, 0, 0.02, 0);
-    this.ponytail.add(ribbon);
+      // Upper lash — thin curved bar above the eye
+      const lash = box(0.18, 0.02, 0.04, basic(PALETTE.lashes));
+      lash.position.set(0, 0.085, 0.02);
+      lash.rotation.z = -0.05 * xSign;
+      g.add(lash);
 
-    this.head.add(this.ponytail);
+      // Lower lash hint
+      const lashB = box(0.14, 0.012, 0.04, basic(PALETTE.lashes));
+      lashB.position.set(0, -0.075, 0.02);
+      g.add(lashB);
 
-    // ---------- Sun hat (the iconic accessory) ----------
-    const hatBrim = cylinder(0.7, 0.7, 0.04, 0xffe066, 0, 0.42, 0);
-    this.head.add(hatBrim);
-    const hatTop = cylinder(0.32, 0.36, 0.18, 0xffd54a, 0, 0.55, 0);
-    this.head.add(hatTop);
-    const hatBand = cylinder(0.33, 0.37, 0.06, PALETTE.dressShade, 0, 0.46, 0);
-    this.head.add(hatBand);
-    // Tiny sunflower on hat
-    this.head.add(this._sunflower(0.34, 0.5, 0.34));
+      return g;
+    };
 
-    // ---------- Shadow blob (cheap fake AO under feet) ----------
-    const shadowGeom = new THREE.CircleGeometry(0.55, 24);
-    const shadowMat = new THREE.MeshBasicMaterial({
-      color: 0x000000,
+    this.eyeL = mkEye(-1);
+    this.eyeR = mkEye(1);
+    eyeGroup.add(this.eyeL, this.eyeR);
+
+    // Eyebrows — teal (matching hair)
+    const browMat = toon(PALETTE.brow);
+    const browL = box(0.16, 0.04, 0.05, browMat);
+    browL.position.set(-0.16, 0.18, 0.42);
+    browL.rotation.z = 0.05;
+    this.head.add(browL);
+    const browR = browL.clone();
+    browR.position.x = 0.16;
+    browR.rotation.z = -0.05;
+    this.head.add(browR);
+
+    // Nose — small button
+    const nose = sphere(0.05, toon(PALETTE.skinShade), 12);
+    nose.position.set(0, -0.05, 0.49);
+    nose.scale.set(1.0, 0.9, 0.9);
+    this.head.add(nose);
+
+    // Cheeks — soft pink blush
+    const cheekMat = new THREE.MeshBasicMaterial({
+      color: PALETTE.cheek,
       transparent: true,
-      opacity: 0.25,
+      opacity: 0.55,
     });
-    const shadowDisc = new THREE.Mesh(shadowGeom, shadowMat);
-    shadowDisc.rotation.x = -Math.PI / 2;
-    shadowDisc.position.y = 0.01;
-    this.group.add(shadowDisc);
+    const cheekL = sphere(0.09, cheekMat, 12);
+    cheekL.scale.set(1, 0.7, 0.3);
+    cheekL.position.set(-0.22, -0.08, 0.42);
+    this.head.add(cheekL);
+    const cheekR = cheekL.clone();
+    cheekR.position.x = 0.22;
+    this.head.add(cheekR);
 
-    // Animation state
-    this.t = 0;
-    this.walkPhase = 0;
-    this.targetPos = null;
-    this.speed = 1.4;
-  }
-
-  _sunflower(x, y, z) {
-    const g = new THREE.Group();
-    g.position.set(x, y, z);
-    const center = sphere(0.04, 0x6b3e20, 0, 0, 0, 8);
-    g.add(center);
-    const petalMat = mat(0xffe066);
-    const petalGeom = new THREE.SphereGeometry(0.04, 8, 8);
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      const p = new THREE.Mesh(petalGeom, petalMat);
-      p.position.set(Math.cos(a) * 0.05, Math.sin(a) * 0.05, 0);
-      p.scale.set(0.7, 0.7, 0.4);
-      g.add(p);
+    // Freckles — tiny dots across nose / upper cheeks
+    const freckleMat = basic(PALETTE.freckle);
+    const freckleGeom = new THREE.SphereGeometry(0.012, 6, 6);
+    const frecklePositions = [
+      [-0.18, -0.04, 0.46], [-0.13, -0.02, 0.48], [-0.07, -0.06, 0.49],
+      [0.07, -0.06, 0.49], [0.13, -0.02, 0.48], [0.18, -0.04, 0.46],
+      [-0.10, 0.02, 0.48], [0.10, 0.02, 0.48],
+      [-0.20, -0.10, 0.43], [0.20, -0.10, 0.43],
+    ];
+    for (const [x, y, z] of frecklePositions) {
+      const f = new THREE.Mesh(freckleGeom, freckleMat);
+      f.position.set(x, y, z);
+      this.head.add(f);
     }
-    return g;
+
+    // Lips — gentle smile, two tones
+    const upperLip = new THREE.Mesh(
+      new THREE.TorusGeometry(0.07, 0.018, 6, 12, Math.PI),
+      toon(PALETTE.lipUpper)
+    );
+    upperLip.rotation.z = Math.PI;
+    upperLip.position.set(0, -0.21, 0.46);
+    this.head.add(upperLip);
+
+    const lowerLip = new THREE.Mesh(
+      new THREE.TorusGeometry(0.06, 0.022, 6, 12, Math.PI),
+      toon(PALETTE.lipLower)
+    );
+    lowerLip.position.set(0, -0.235, 0.46);
+    this.head.add(lowerLip);
   }
 
-  /** Walk toward a target world-space XZ position. */
-  walkTo(targetVec3) {
-    this.targetPos = targetVec3.clone();
+  _buildEars() {
+    const skinMat = toon(PALETTE.skin);
+    const goldMat = toon(PALETTE.gold);
+
+    const earL = sphere(0.08, skinMat, 10);
+    earL.scale.set(0.6, 1.1, 0.4);
+    earL.position.set(-0.48, -0.02, 0.05);
+    this.head.add(earL);
+
+    const earR = earL.clone();
+    earR.position.x = 0.48;
+    this.head.add(earR);
+
+    // Gold hoops
+    const hoopGeom = new THREE.TorusGeometry(0.05, 0.012, 6, 16);
+    const hoopL = new THREE.Mesh(hoopGeom, goldMat);
+    hoopL.position.set(-0.5, -0.12, 0.05);
+    hoopL.rotation.y = Math.PI / 2;
+    this.head.add(hoopL);
+    const hoopR = hoopL.clone();
+    hoopR.position.x = 0.5;
+    this.head.add(hoopR);
   }
 
-  setPosition(x, z) {
-    this.group.position.set(x, 0, z);
+  _buildHair() {
+    const hairMat = toon(PALETTE.hair);
+    const hairShade = toon(PALETTE.hairShade);
+    const hairHi = toon(PALETTE.hairHighlight);
+
+    // Hair root (so we can flop it during anim)
+    this.hair = new THREE.Group();
+    this.head.add(this.hair);
+
+    // Skull cap (covers crown + back)
+    const cap = sphere(0.54, hairMat, 24);
+    cap.scale.set(1.04, 1.05, 1.05);
+    cap.position.set(0, 0.05, -0.04);
+    this.hair.add(cap);
+
+    // Asymmetric long bangs swept across forehead
+    const bang1 = box(0.55, 0.18, 0.22, hairMat);
+    bang1.position.set(-0.05, 0.32, 0.32);
+    bang1.rotation.x = -0.2;
+    bang1.rotation.z = -0.15;
+    this.hair.add(bang1);
+
+    const bang2 = box(0.35, 0.14, 0.18, hairShade);
+    bang2.position.set(0.18, 0.3, 0.36);
+    bang2.rotation.x = -0.25;
+    bang2.rotation.z = 0.2;
+    this.hair.add(bang2);
+
+    // Side locks falling past the cheeks (the layered bob shape)
+    const sideL = new THREE.Group();
+    const sl1 = box(0.18, 0.55, 0.2, hairMat);
+    sl1.position.set(0, -0.2, 0);
+    sideL.add(sl1);
+    // Curl tip
+    const slTip = sphere(0.13, hairShade, 12);
+    slTip.position.set(0.04, -0.5, 0.05);
+    slTip.scale.set(0.9, 1.1, 0.9);
+    sideL.add(slTip);
+    sideL.position.set(-0.4, 0.05, 0.1);
+    sideL.rotation.z = -0.08;
+    this.hair.add(sideL);
+
+    const sideR = new THREE.Group();
+    const sr1 = box(0.18, 0.55, 0.2, hairMat);
+    sr1.position.set(0, -0.2, 0);
+    sideR.add(sr1);
+    const srTip = sphere(0.13, hairShade, 12);
+    srTip.position.set(-0.04, -0.5, 0.05);
+    srTip.scale.set(0.9, 1.1, 0.9);
+    sideR.add(srTip);
+    sideR.position.set(0.4, 0.05, 0.1);
+    sideR.rotation.z = 0.08;
+    this.hair.add(sideR);
+
+    this.sideHairL = sideL;
+    this.sideHairR = sideR;
+
+    // Back hair — slightly longer mass
+    const back = box(0.6, 0.5, 0.22, hairShade);
+    back.position.set(0, -0.05, -0.32);
+    this.hair.add(back);
+
+    // Highlight strands
+    const hi1 = box(0.06, 0.5, 0.08, hairHi);
+    hi1.position.set(-0.25, 0, 0.3);
+    hi1.rotation.z = -0.15;
+    this.hair.add(hi1);
+    const hi2 = box(0.04, 0.4, 0.08, hairHi);
+    hi2.position.set(0.18, 0.05, 0.32);
+    hi2.rotation.z = 0.12;
+    this.hair.add(hi2);
+  }
+
+  _buildShadow() {
+    const shadow = new THREE.Mesh(
+      new THREE.CircleGeometry(0.6, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        transparent: true,
+        opacity: 0.28,
+      })
+    );
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.01;
+    this.shadow = shadow;
+    this.group.add(shadow);
+
+    // Shield aura — visible when active, controlled by setShield()
+    this.shieldAura = new THREE.Mesh(
+      new THREE.SphereGeometry(0.95, 18, 18),
+      new THREE.MeshBasicMaterial({
+        color: 0x55aaff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })
+    );
+    this.shieldAura.position.y = 1.1;
+    this.body.add(this.shieldAura);
+
+    // Double-points sparkle ring (ground-aligned)
+    this.doubleRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.55, 0.04, 6, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0xff66ff,
+        transparent: true,
+        opacity: 0,
+      })
+    );
+    this.doubleRing.rotation.x = -Math.PI / 2;
+    this.doubleRing.position.y = 0.02;
+    this.group.add(this.doubleRing);
+  }
+
+  setShield(active) {
+    this._shieldActive = active;
+  }
+  setDouble(active) {
+    this._doubleActive = active;
+  }
+
+  // ---------- Animation states ----------
+  setState(s) {
+    if (s === this.state) return;
+    this.prevState = this.state;
+    this.state = s;
+    this.stateTime = 0;
+  }
+
+  setPosition(x, y, z) {
+    this.group.position.set(x, y, z);
   }
 
   update(dt) {
     this.t += dt;
+    this.stateTime += dt;
 
-    // Walk toward target
-    let walking = false;
-    if (this.targetPos) {
-      const dx = this.targetPos.x - this.group.position.x;
-      const dz = this.targetPos.z - this.group.position.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist > 0.1) {
-        const step = Math.min(this.speed * dt, dist);
-        const ang = Math.atan2(dx, dz);
-        this.group.position.x += Math.sin(ang) * step;
-        this.group.position.z += Math.cos(ang) * step;
-        // Smooth-rotate toward direction
-        const targetRot = ang;
-        let diff = targetRot - this.group.rotation.y;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        this.group.rotation.y += diff * Math.min(1, dt * 8);
-        walking = true;
-      } else {
-        this.targetPos = null;
-      }
+    if (this.state === "run") this._animRun(dt);
+    else if (this.state === "jump") this._animJump(dt);
+    else if (this.state === "slide") this._animSlide(dt);
+    else if (this.state === "hit") this._animHit(dt);
+    else this._animIdle(dt);
+
+    // Aura visibility (set by game.js each frame)
+    const targetShield = this._shieldActive ? 0.25 + Math.sin(this.t * 6) * 0.05 : 0;
+    this.shieldAura.material.opacity += (targetShield - this.shieldAura.material.opacity) * 0.2;
+    const targetDouble = this._doubleActive ? 0.7 + Math.sin(this.t * 8) * 0.2 : 0;
+    this.doubleRing.material.opacity += (targetDouble - this.doubleRing.material.opacity) * 0.2;
+    this.doubleRing.scale.setScalar(1 + Math.sin(this.t * 6) * 0.08);
+
+    // Hair sway — bigger when running
+    const swayMul = this.state === "run" ? 2.5 : 1.0;
+    this.sideHairL.rotation.x = Math.sin(this.t * 8) * 0.08 * swayMul;
+    this.sideHairR.rotation.x = Math.sin(this.t * 8 + 0.5) * 0.08 * swayMul;
+    // Hair group tilts slightly back when running (wind)
+    if (this.state === "run") {
+      this.hair.rotation.x = -0.08;
+    } else {
+      this.hair.rotation.x *= 0.9;
     }
+  }
 
-    // Idle bob
-    const bob = walking
-      ? Math.abs(Math.sin(this.t * 8)) * 0.05
-      : Math.sin(this.t * 2.2) * 0.03;
+  _animIdle(dt) {
+    const bob = Math.sin(this.t * 2) * 0.03;
     this.body.position.y = bob;
+    // Ease arms/legs back to neutral
+    this._easeRot(this.armL, 0, 0, 0, 0.9);
+    this._easeRot(this.armR, 0, 0, 0, 0.9);
+    this._easeRot(this.legL, 0, 0, 0, 0.9);
+    this._easeRot(this.legR, 0, 0, 0, 0.9);
+    this.body.rotation.x = 0;
+  }
 
-    // Walk cycle for legs/arms
-    if (walking) {
-      this.walkPhase += dt * 9;
-      this.legL.rotation.x = Math.sin(this.walkPhase) * 0.6;
-      this.legR.rotation.x = -Math.sin(this.walkPhase) * 0.6;
-      this.armL.rotation.x = -Math.sin(this.walkPhase) * 0.5;
-      this.armR.rotation.x = Math.sin(this.walkPhase) * 0.5;
-    } else {
-      // Ease back to idle
-      this.legL.rotation.x *= 0.9;
-      this.legR.rotation.x *= 0.9;
-      this.armL.rotation.x *= 0.9;
-      this.armR.rotation.x *= 0.9;
-      // Subtle breathing on arms
-      const sway = Math.sin(this.t * 1.5) * 0.05;
-      this.armL.rotation.z = sway;
-      this.armR.rotation.z = -sway;
-    }
+  _animRun(dt) {
+    // Fast pumping run cycle
+    const phase = this.t * 12;
+    this.legL.rotation.x = Math.sin(phase) * 0.9;
+    this.legR.rotation.x = -Math.sin(phase) * 0.9;
+    this.armL.rotation.x = -Math.sin(phase) * 0.8;
+    this.armR.rotation.x = Math.sin(phase) * 0.8;
+    // Subtle torso lean forward
+    this.body.rotation.x = 0.08;
+    // Vertical bounce
+    this.body.position.y = Math.abs(Math.sin(phase)) * 0.06;
+  }
 
-    // Ponytail sway
-    this.ponytail.rotation.x = Math.sin(this.t * 4) * 0.1 - 0.1;
-    this.ponytail.rotation.z = Math.sin(this.t * 3) * 0.05;
+  _animJump(dt) {
+    // Tucked legs, arms up. The Y position is set by game loop (gravity).
+    const tuck = Math.min(1, this.stateTime * 6);
+    this.legL.rotation.x = -0.6 * tuck;
+    this.legR.rotation.x = -0.6 * tuck;
+    this.armL.rotation.x = -1.6 * tuck;
+    this.armR.rotation.x = -1.6 * tuck;
+    this.body.rotation.x = 0;
+    this.body.position.y = 0;
+  }
 
-    // Head idle look
-    if (!walking) {
-      this.head.rotation.y = Math.sin(this.t * 0.7) * 0.15;
-    } else {
-      this.head.rotation.y *= 0.9;
-    }
+  _animSlide(dt) {
+    // Body tilts back, legs forward. Game loop also lowers the whole group.
+    const t = Math.min(1, this.stateTime * 6);
+    this.body.rotation.x = -0.9 * t;
+    this.legL.rotation.x = 1.2 * t;
+    this.legR.rotation.x = 1.2 * t;
+    this.armL.rotation.x = 0.4 * t;
+    this.armR.rotation.x = 0.4 * t;
+    this.body.position.y = -0.2 * t;
+  }
+
+  _animHit(dt) {
+    // Knockback wobble
+    const t = this.stateTime;
+    this.body.rotation.x = -0.4 * Math.sin(t * 14);
+    this.body.rotation.z = 0.2 * Math.sin(t * 10);
+    this.armL.rotation.x = -1.3;
+    this.armR.rotation.x = -1.3;
+    this.legL.rotation.x = 0.4;
+    this.legR.rotation.x = -0.4;
+  }
+
+  _easeRot(obj, x, y, z, factor) {
+    obj.rotation.x = obj.rotation.x * factor + x * (1 - factor);
+    obj.rotation.y = obj.rotation.y * factor + y * (1 - factor);
+    obj.rotation.z = obj.rotation.z * factor + z * (1 - factor);
   }
 }
