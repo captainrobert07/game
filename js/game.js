@@ -1,11 +1,12 @@
 import * as THREE from "three";
 
 import { Hanna } from "./hanna.js";
+import { loadHannaFBX } from "./hanna_fbx.js";
 import { World, LANE, LANES } from "./world.js";
 import { ObstacleManager, TYPE } from "./obstacles.js";
 import { Input } from "./input.js";
 import { Audio } from "./audio.js";
-import { ParticleSystem, CameraShaker } from "./fx.js";
+import { ParticleSystem, CameraShaker, DustTrail, Butterflies } from "./fx.js";
 import { load, save, recordRun } from "./save.js";
 
 // ---------- Tunables ----------
@@ -73,14 +74,32 @@ class Game {
     this.world = new World(this.scene);
     this.obstacles = new ObstacleManager(this.scene);
 
-    // Hanna
+    // Hanna — try FBX first, fall back to procedural while it loads/fails
     this.hanna = new Hanna();
     this.hanna.setPosition(0, 0, PLAYER_START_Z);
     this.scene.add(this.hanna.group);
 
+    // Async-load the FBX. If it works, swap her in.
+    loadHannaFBX("models/hanna/hanna.fbx")
+      .then((fbxHanna) => {
+        // Preserve current pos/state
+        const pos = this.hanna.group.position.clone();
+        this.scene.remove(this.hanna.group);
+        this.hanna = fbxHanna;
+        this.hanna.setPosition(pos.x, pos.y, pos.z);
+        this.hanna.setState(this.over ? "hit" : this.running ? "run" : "idle");
+        this.scene.add(this.hanna.group);
+        console.info("Loaded FBX Hanna.");
+      })
+      .catch((err) => {
+        console.warn("FBX load failed, using procedural Hanna:", err);
+      });
+
     // FX
     this.particles = new ParticleSystem(this.scene);
     this.shaker = new CameraShaker();
+    this.dust = new DustTrail(this.scene);
+    this.butterflies = new Butterflies(this.scene, 6);
 
     // Audio
     this.audio = new Audio();
@@ -442,6 +461,15 @@ class Game {
     // World + obstacles
     this.world.update(pz, dt);
     this.obstacles.update(dt, pz);
+
+    // Dust trail behind Hanna while running on the ground
+    if (this.player.y < 0.05 && !this.player.sliding) {
+      this.dust.emit(px, 0, pz, performance.now() * 0.001);
+    }
+    this.dust.update(dt);
+
+    // Butterflies follow loosely
+    this.butterflies.update(dt, this.hanna.group.position);
 
     // Magnet pickup
     if (this.run.time < this.player.magnetUntil) {

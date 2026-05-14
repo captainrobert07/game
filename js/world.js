@@ -107,21 +107,38 @@ class Chunk {
       this.decor.add(farHill);
     }
 
-    // Random props alongside the path
-    const propsPerSide = 3 + Math.floor(Math.random() * 3);
+    // Random props alongside the path — denser & more varied
+    const propsPerSide = 5 + Math.floor(Math.random() * 4);
     for (let i = 0; i < propsPerSide * 2; i++) {
       const sign = i < propsPerSide ? -1 : 1;
       const z = (Math.random() - 0.5) * (CHUNK - 1);
-      const x = sign * (PATH_WIDTH / 2 + 0.6 + Math.random() * 4);
+      const x = sign * (PATH_WIDTH / 2 + 0.6 + Math.random() * 6);
       const r = Math.random();
       let prop;
-      if (r < 0.3) prop = this._makeFence();
-      else if (r < 0.55) prop = this._makeBush();
-      else if (r < 0.8) prop = this._makeSunflower();
-      else prop = this._makeHayBale();
+      if (r < 0.18) prop = this._makeFence();
+      else if (r < 0.35) prop = this._makeBush();
+      else if (r < 0.55) prop = this._makeSunflower();
+      else if (r < 0.7) prop = this._makeHayBale();
+      else if (r < 0.92) prop = this._makeTree();
+      else prop = this._makeFlowerPatch();
       prop.position.set(x, 0, z);
       prop.rotation.y = Math.random() * Math.PI * 2;
       this.decor.add(prop);
+    }
+
+    // Grass tufts directly along the path edges (add atmosphere; SwayKey marks
+    // them so the world.update loop can animate them)
+    const tuftCount = 14 + Math.floor(Math.random() * 6);
+    for (let i = 0; i < tuftCount; i++) {
+      const sign = Math.random() < 0.5 ? -1 : 1;
+      const x = sign * (PATH_WIDTH / 2 + 0.15 + Math.random() * 1.2);
+      const z = (Math.random() - 0.5) * (CHUNK - 0.5);
+      const tuft = this._makeGrassTuft();
+      tuft.position.set(x, 0, z);
+      tuft.rotation.y = Math.random() * Math.PI * 2;
+      tuft.userData.swayPhase = Math.random() * Math.PI * 2;
+      tuft.userData.sway = true;
+      this.decor.add(tuft);
     }
   }
 
@@ -184,6 +201,79 @@ class Chunk {
     g.add(bale);
     return g;
   }
+
+  _makeTree() {
+    // Layered cartoon tree — trunk + 3 leaf clusters of varying greens.
+    const g = new THREE.Group();
+    const trunkH = 1.4 + Math.random() * 1.0;
+    const trunk = cyl(0.18, 0.28, trunkH, 0x6b3e20);
+    trunk.position.y = trunkH / 2;
+    g.add(trunk);
+    // Leaf clusters
+    const leafColors = [0x5fa044, 0x4f8a3d, 0x3fa34d];
+    for (let i = 0; i < 3 + Math.floor(Math.random() * 2); i++) {
+      const r = 0.55 + Math.random() * 0.35;
+      const leaf = sphere(r, leafColors[i % leafColors.length]);
+      leaf.position.set(
+        (Math.random() - 0.5) * 0.4,
+        trunkH + 0.2 + Math.random() * 0.4,
+        (Math.random() - 0.5) * 0.4
+      );
+      leaf.castShadow = true;
+      // Mark for subtle sway
+      leaf.userData.sway = true;
+      leaf.userData.swayPhase = Math.random() * Math.PI * 2;
+      leaf.userData.swayAmp = 0.04;
+      g.add(leaf);
+    }
+    return g;
+  }
+
+  _makeFlowerPatch() {
+    const g = new THREE.Group();
+    const colors = [0xff96b8, 0xffd54a, 0xffffff, 0xff6b6b, 0xa66bff];
+    const count = 6 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < count; i++) {
+      const stem = cyl(0.015, 0.015, 0.2 + Math.random() * 0.15, 0x4a8c3a);
+      stem.position.set(
+        (Math.random() - 0.5) * 0.7,
+        0.1,
+        (Math.random() - 0.5) * 0.7
+      );
+      g.add(stem);
+      const head = sphere(0.05, colors[Math.floor(Math.random() * colors.length)]);
+      head.position.copy(stem.position);
+      head.position.y = stem.position.y + 0.12;
+      g.add(head);
+    }
+    return g;
+  }
+
+  _makeGrassTuft() {
+    // A few slim blades coming up from the ground.
+    const g = new THREE.Group();
+    const greens = [0x6fb058, 0x7eb558, 0x9bcc6e, 0x8ac060];
+    const count = 4 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < count; i++) {
+      const h = 0.18 + Math.random() * 0.25;
+      const blade = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.05, h),
+        new THREE.MeshToonMaterial({
+          color: greens[i % greens.length],
+          side: THREE.DoubleSide,
+        })
+      );
+      blade.position.set(
+        (Math.random() - 0.5) * 0.3,
+        h / 2,
+        (Math.random() - 0.5) * 0.3
+      );
+      blade.rotation.y = Math.random() * Math.PI;
+      blade.castShadow = false;
+      g.add(blade);
+    }
+    return g;
+  }
 }
 
 /** Manager: keeps a rolling window of chunks centered around the camera. */
@@ -200,6 +290,25 @@ export class World {
     farGround.rotation.x = -Math.PI / 2;
     farGround.position.y = -0.05;
     scene.add(farGround);
+
+    // Distant mountain silhouette ring — persistent, never recycled
+    this.mountains = new THREE.Group();
+    scene.add(this.mountains);
+    const mountainColors = [0x6a8a92, 0x4f7a82, 0x3a6066];
+    for (let i = 0; i < 28; i++) {
+      const a = (i / 28) * Math.PI * 2;
+      const dist = 90 + Math.random() * 18;
+      const peak = new THREE.Mesh(
+        new THREE.ConeGeometry(8 + Math.random() * 6, 12 + Math.random() * 8, 5),
+        new THREE.MeshBasicMaterial({
+          color: mountainColors[Math.floor(Math.random() * mountainColors.length)],
+          fog: true,
+        })
+      );
+      peak.position.set(Math.cos(a) * dist, 5 + Math.random() * 4, Math.sin(a) * dist);
+      peak.rotation.y = Math.random() * Math.PI * 2;
+      this.mountains.add(peak);
+    }
 
     // Sky dome — large hemisphere with gradient feel via fog
     // (Three.js fog handles atmosphere; this is just visual depth.)
@@ -252,6 +361,12 @@ export class World {
     // Cloud drift
     this.clouds.position.x += dt * 0.6;
     if (this.clouds.position.x > 40) this.clouds.position.x -= 80;
+    // Clouds also need to scroll Z with the camera (they were initialized over a
+    // 200m Z range but get left behind otherwise)
+    this.clouds.position.z = camZ;
+
+    // Mountains follow the camera at a slight delay so they feel infinitely far
+    this.mountains.position.z = camZ;
 
     // Recycle chunks that are too far behind, append ahead
     while (this.chunks.length > 0 && this.chunks[0].z + CHUNK < camZ - VIEW_BEHIND * CHUNK) {
@@ -262,6 +377,17 @@ export class World {
     while (lastZ + CHUNK * VIEW_AHEAD < camZ + VIEW_AHEAD * CHUNK) {
       const next = this.chunks[this.chunks.length - 1].z + CHUNK;
       this._addChunk(next);
+    }
+
+    // Animate sway-marked decor (grass tufts, leaves)
+    const t = performance.now() * 0.001;
+    for (const c of this.chunks) {
+      c.group.traverse((o) => {
+        if (!o.userData.sway) return;
+        const phase = o.userData.swayPhase || 0;
+        const amp = o.userData.swayAmp ?? 0.06;
+        o.rotation.z = Math.sin(t * 1.6 + phase) * amp;
+      });
     }
   }
 

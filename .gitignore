@@ -18,3 +18,6 @@ npm-debug.log
 
 # Logs
 *.log
+
+# Model extraction temp (we keep models/hanna/ but not extraction junk)
+models/_extracted/
